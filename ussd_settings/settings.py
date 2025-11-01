@@ -123,3 +123,36 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+
+
+
+# Celery Configuration 
+
+
+# celery_config.py
+
+# Retry configuration
+CELERY_TASK_ACKS_LATE = True  # Only ack after task completes
+CELERY_TASK_REJECT_ON_WORKER_LOST = True  # Requeue on worker crash
+
+# Result backend for tracking
+import os
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://redis:6379/0')
+CELERY_RESULT_EXPIRES = 3600  # 1 hour
+
+# Task time limits
+CELERY_TASK_SOFT_TIME_LIMIT = 300  # 5 minutes soft limit
+CELERY_TASK_TIME_LIMIT = 360  # 6 minutes hard limit
+
+# Monitoring
+CELERY_SEND_TASK_SENT_EVENT = True
+CELERY_TRACK_STARTED = True
+
+# Rate limiting (protect external APIs)
+CELERY_TASK_ANNOTATIONS = {
+    'twara.tasks.send_whatsapp_message': {'rate_limit': '100/m'},
+    'twara.tasks.poll_payment_status': {'rate_limit': '200/m'},
+}

@@ -1,0 +1,2 @@
+class StateNotFoundError(Exception):
+    pass
