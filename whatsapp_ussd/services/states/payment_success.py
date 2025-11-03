@@ -69,7 +69,7 @@ class PaymentSuccessState(BaseStateHandler):
             self.ussd_user.save(update_fields=['is_vip'])
         
         # Schedule welcome message
-        from whatsapp_ussd.tasks import send_welcome_to_subscriber
+        from ...tasks import send_welcome_to_subscriber
         send_welcome_to_subscriber.apply_async(
             args=[self.customer.phone_number],
             countdown=5
@@ -112,5 +112,3 @@ class PaymentSuccessState(BaseStateHandler):
              .add_reply_button("go_menu", "📋 Subira ku menu")
         )
     
-    def get_allowed_transitions(self) -> list:
-        return ["exam_start", "main_menu", "payment_success"]

@@ -1,5 +1,6 @@
 # tasks.py
 from celery import shared_task
+import asyncio
 from celery.schedules import crontab
 from django.utils import timezone
 from django.db import transaction
@@ -7,19 +8,104 @@ from django.db.models import F, ExpressionWrapper
 from django.db import models
 from datetime import timedelta
 import logging
-
+from typing import Any, Dict, Optional
 from whatsapp_ussd.models import Customer, UserPayment, quiz, Performance, UssdUser
 
 # Note: UssdUser inherits from Customer, so use UssdUser for all user operations
 # Customer is kept for backward compatibility and for non-USSD users
 from whatsapp_ussd.services.core.session import UserSession
 from whatsapp_ussd.services.core.controller import StateFlowController, StateRegistry
-from whatsapp import TextMessage, InteractiveMessage
+from whatsapp import TextMessage, InteractiveMessage, WHATSAPP_CLIENT, MessageResponse, MediaUploadResponse
 
 logger = logging.getLogger(__name__)
 
 
 # --- HIGH PRIORITY TASKS (User-Facing) ---
+
+
+logger = logging.getLogger(__name__)
+
+
+@shared_task(
+    name="process_whatsapp_message",
+    bind=True,
+    max_retries=3,
+    soft_time_limit=30,
+    autoretry_for=(Exception,),
+    retry_backoff=5
+)
+def process_whatsapp_message(
+    self,
+    phone_number: str,
+    message_text: str,
+    message_id: Optional[str] = None,
+    message_type: str = "text"
+) -> Dict[str, Any]:
+    """
+    Celery task: Central entry point for handling WhatsApp messages (synchronous version).
+
+    Args:
+        phone_number (str): Sender phone number in international format.
+        message_text (str): Incoming message text.
+        message_id (Optional[str]): WhatsApp-provided message ID.
+        message_type (str): Type of message (default: "text").
+
+    Returns:
+        Dict[str, Any]: Structured task result including success status and response body.
+    """
+    controller = StateFlowController()
+
+    try:
+        logger.info(
+            "[process_whatsapp_message] Received message_id=%s type=%s from %s: %r",
+            message_id,
+            message_type,
+            phone_number,
+            message_text
+        )
+
+        # --- CALL CONTROLLER SYNCHRONOUSLY ---
+        response: Optional[MessageResponse] = controller.handle_message(phone_number, message_text)
+
+        # --- NORMALIZE RESPONSE ---
+        if isinstance(response, dict):
+            normalized_response = response
+        elif isinstance(response, MessageResponse):
+            normalized_response = {
+                "success": response.success,
+                "message_id": getattr(response, "message_id", None),
+                "body": getattr(response, "raw_response", None),
+            }
+        else:
+            normalized_response = {"success": False, "message_id": None, "body": None}
+
+        # --- PREPARE TASK RESULT ---
+        result: Dict[str, Any] = {
+            "phone_number": phone_number,
+            "message_id": message_id,
+            "message_type": message_type,
+            "incoming_text": message_text,
+            "response_success": normalized_response.get("success", False),
+            "response_body": normalized_response.get("body"),
+        }
+
+        logger.info(
+            "[process_whatsapp_message] ✅ Completed for %s | Response: %s",
+            phone_number,
+            result["response_body"]
+        )
+
+        return result
+
+    except Exception as exc:
+        logger.exception(
+            "[process_whatsapp_message] ❌ Error processing message_id=%s for %s: %s",
+            message_id,
+            phone_number,
+            exc
+        )
+        raise self.retry(exc=exc)
+
 
 @shared_task(queue='high_priority', bind=True)
 def trigger_subscription_offer(self, phone_number: str):
@@ -82,7 +168,7 @@ def send_whatsapp_message(payload: dict, phone_number: str):
         # Log successful send (if UserEvent model exists)
         # Use UssdUser directly since it inherits from Customer
         try:
-            from whatsapp_ussd.models import UserEvent
+            from .models import UserEvent
             # Try to get UssdUser first (preferred), fallback to Customer if doesn't exist
             try:
                 ussd_user = UssdUser.objects.get(phone_number=phone_number)
@@ -172,15 +258,11 @@ def update_customer_performance(self, customer_id: int):
         self.retry(exc=exc, countdown=60)
 
 
-@shared_task(queue='default', bind=True, max_retries=10)
+@shared_task(queue='default', bind=True, max_retries=30)
 def poll_payment_status(self, payment_ref: str, attempt: int = 0):
     """
     Poll Mobile Money API for payment confirmation.
-    
-    Design Rationale:
-    • Handles async payment webhooks
-    • Retries every 10s for up to 5 minutes
-    • Transitions user state on success/failure
+    Retries every 10 seconds for up to 5 minutes.
     """
     try:
         payment = UserPayment.objects.get(access_code=payment_ref)
@@ -189,30 +271,62 @@ def poll_payment_status(self, payment_ref: str, attempt: int = 0):
             logger.info(f"Payment {payment_ref} already confirmed")
             return
         
-        # Call Mobile Money API (MTN/Airtel)
-        # TODO: Implement Mobile Money integration
-        # For now, simulate payment check
+        # Check payment status via API (if available)
         try:
-            from whatsapp_ussd.integrations.momo import check_payment_status
-            status = check_payment_status(payment.ref_id)
+            from .services.integrations.mobile_money import MobileMoneyAPI
+            
+            api = MobileMoneyAPI()
+            status = api.check_payment_status(payment.ref_id)
         except ImportError:
-            logger.warning("Mobile Money integration not implemented, skipping payment check")
-            status = "FAILED"
+            logger.warning("Mobile Money integration not available, skipping poll")
+            return
         
         if status == "SUCCESSFUL":
+            # Payment succeeded
             payment.status = "succeeded"
             payment.save(update_fields=['status', 'last_updated'])
             
-            # Trigger payment success flow
-            handle_payment_success.delay(payment.access_code)
+            # Get or create UssdUser
+            try:
+                ussd_user = UssdUser.objects.get(phone_number=payment.paying_number)
+            except UssdUser.DoesNotExist:
+                ussd_user = UssdUser.objects.create(phone_number=payment.paying_number)
+            
+            # Transition to success state
+            session = UserSession(ussd_user.phone_number)
+            session.transition_to("payment_success", payment_ref=payment_ref)
+            
+            # Send success message
+            handler = StateRegistry.get_handler("payment_success", session)
+            message = handler.on_enter()
+            
+            if message:
+                message.send()
+            
+            logger.info(f"Payment {payment_ref} succeeded")
             
         elif status == "FAILED":
+            # Payment failed
             payment.status = "failed"
             payment.save(update_fields=['status', 'last_updated'])
             
-            # Notify user
-            # TODO: Implement send_payment_failed_message task
-            logger.warning(f"Payment failed for {payment.paying_number}")
+            # Get or create UssdUser
+            try:
+                ussd_user = UssdUser.objects.get(phone_number=payment.paying_number)
+            except UssdUser.DoesNotExist:
+                ussd_user = UssdUser.objects.create(phone_number=payment.paying_number)
+            
+            session = UserSession(ussd_user.phone_number)
+            session.transition_to("payment_failed", payment_failure_reason="Payment was declined")
+            
+            # Send failure message
+            handler = StateRegistry.get_handler("payment_failed", session)
+            message = handler.on_enter()
+            
+            if message:
+                message.send()
+            
+            logger.warning(f"Payment {payment_ref} failed")
             
         elif attempt < 30:  # Max 5 minutes (30 * 10s)
             # Still pending, retry
@@ -221,11 +335,17 @@ def poll_payment_status(self, payment_ref: str, attempt: int = 0):
                 countdown=10
             )
         else:
-            # Timeout
+            # Timeout after 5 minutes
             payment.status = "failed"
             payment.save(update_fields=['status', 'last_updated'])
-            logger.warning(f"Payment {payment_ref} timeout after 5 minutes")
             
+            send_payment_failed_message.delay(
+                payment.paying_number,
+                "Payment timeout - please try again"
+            )
+            
+            logger.warning(f"Payment {payment_ref} timeout after 5 minutes")
+        
     except Exception as exc:
         logger.error(f"Error polling payment: {exc}", exc_info=True)
         if attempt < 30:
@@ -369,7 +489,7 @@ def send_daily_reminders():
                 
             # Log engagement - UssdUser IS a Customer via inheritance
             try:
-                from whatsapp_ussd.models import UserEvent
+                from .models import UserEvent
                 UserEvent.objects.create(
                     customer=ussd_user,  # UssdUser inherits from Customer
                     event_type='daily_reminder_sent',
@@ -591,7 +711,7 @@ def initiate_mobile_money_payment(self, customer_id: int, phone: str, amount: in
         
         # Call Mobile Money API (if available)
         try:
-            from whatsapp_ussd.integrations.mobile_money import MobileMoneyAPI
+            from .services.integrations.mobile_money import MobileMoneyAPI
             
             api = MobileMoneyAPI()
             result = api.request_payment(phone, amount)
@@ -629,99 +749,6 @@ def initiate_mobile_money_payment(self, customer_id: int, phone: str, amount: in
         logger.error(f"Error initiating payment: {exc}", exc_info=True)
         self.retry(exc=exc, countdown=30)
 
-
-@shared_task(queue='default', bind=True, max_retries=30)
-def poll_payment_status(self, payment_ref: str, attempt: int = 0):
-    """
-    Poll Mobile Money API for payment confirmation.
-    Retries every 10 seconds for up to 5 minutes.
-    """
-    try:
-        payment = UserPayment.objects.get(access_code=payment_ref)
-        
-        if payment.status == "succeeded":
-            logger.info(f"Payment {payment_ref} already confirmed")
-            return
-        
-        # Check payment status via API (if available)
-        try:
-            from whatsapp_ussd.integrations.mobile_money import MobileMoneyAPI
-            
-            api = MobileMoneyAPI()
-            status = api.check_payment_status(payment.ref_id)
-        except ImportError:
-            logger.warning("Mobile Money integration not available, skipping poll")
-            return
-        
-        if status == "SUCCESSFUL":
-            # Payment succeeded
-            payment.status = "succeeded"
-            payment.save(update_fields=['status', 'last_updated'])
-            
-            # Get or create UssdUser
-            try:
-                ussd_user = UssdUser.objects.get(phone_number=payment.paying_number)
-            except UssdUser.DoesNotExist:
-                ussd_user = UssdUser.objects.create(phone_number=payment.paying_number)
-            
-            # Transition to success state
-            session = UserSession(ussd_user.phone_number)
-            session.transition_to("payment_success", payment_ref=payment_ref)
-            
-            # Send success message
-            handler = StateRegistry.get_handler("payment_success", session)
-            message = handler.on_enter()
-            
-            if message:
-                message.send()
-            
-            logger.info(f"Payment {payment_ref} succeeded")
-            
-        elif status == "FAILED":
-            # Payment failed
-            payment.status = "failed"
-            payment.save(update_fields=['status', 'last_updated'])
-            
-            # Get or create UssdUser
-            try:
-                ussd_user = UssdUser.objects.get(phone_number=payment.paying_number)
-            except UssdUser.DoesNotExist:
-                ussd_user = UssdUser.objects.create(phone_number=payment.paying_number)
-            
-            session = UserSession(ussd_user.phone_number)
-            session.transition_to("payment_failed", payment_failure_reason="Payment was declined")
-            
-            # Send failure message
-            handler = StateRegistry.get_handler("payment_failed", session)
-            message = handler.on_enter()
-            
-            if message:
-                message.send()
-            
-            logger.warning(f"Payment {payment_ref} failed")
-            
-        elif attempt < 30:  # Max 5 minutes (30 * 10s)
-            # Still pending, retry
-            self.retry(
-                args=[payment_ref, attempt + 1],
-                countdown=10
-            )
-        else:
-            # Timeout after 5 minutes
-            payment.status = "failed"
-            payment.save(update_fields=['status', 'last_updated'])
-            
-            send_payment_failed_message.delay(
-                payment.paying_number,
-                "Payment timeout - please try again"
-            )
-            
-            logger.warning(f"Payment {payment_ref} timeout after 5 minutes")
-        
-    except Exception as exc:
-        logger.error(f"Error polling payment: {exc}", exc_info=True)
-        if attempt < 30:
-            self.retry(exc=exc, countdown=10)
 
 
 @shared_task(queue='high_priority')
@@ -773,3 +800,39 @@ def send_welcome_to_subscriber(phone_number: str):
         
     except Exception as exc:
         logger.error(f"Error sending welcome message: {exc}", exc_info=True)
+
+
+# Additional Celery task for support alerts
+@shared_task(queue='low_priority')
+def alert_support_team(customer_id: int, issue: str, retry_count: int):
+    """
+    Alert support team about customers needing help.
+    """
+    try:
+        from .models import Customer
+        from whatsapp import TextMessage
+        import os
+        
+        customer = Customer.objects.get(id=customer_id)
+        
+        # Send alert to support number
+        support_phone = os.getenv('SUPPORT_PHONE', '0788123456')
+        
+        message = TextMessage(
+            to=support_phone,
+            body=(
+                f"🚨 *SUPPORT ALERT*\n\n"
+                f"Customer needs help:\n"
+                f"Name: {customer.name}\n"
+                f"Phone: {customer.phone_number}\n"
+                f"Issue: {issue}\n"
+                f"Attempts: {retry_count}\n\n"
+                f"Please contact customer."
+            )
+        )
+        message.send()
+        
+        logger.info(f"Support alert sent for customer {customer_id}")
+        
+    except Exception as exc:
+        logger.error(f"Error sending support alert: {exc}", exc_info=True)

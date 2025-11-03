@@ -73,7 +73,7 @@ summary = ussd_user.get_activity_summary()
 ### When to Use Customer
 - User identification (name, phone_number)
 - Payment/subscription data
-- Quiz results
+- quiz results
 - Basic profile information
 
 ### When to Use UssdUser
@@ -130,7 +130,7 @@ active_users = UssdUser.objects.filter(
 
 ## 📝 Patterns to Follow
 
-### 1. Quiz Result Processing (When Implementing Exam States)
+### 1. quiz Result Processing (When Implementing Exam States)
 
 When processing quiz results that indicate failure, update UssdUser:
 
@@ -282,7 +282,7 @@ active_24h = UssdUser.objects.filter(
 **Customer model is now only used for:**
 - Basic user identification
 - Payment/subscription data
-- Quiz results
+- quiz results
 - Profile information
 
 The separation ensures clean data architecture and proper tracking of user progress and activity!

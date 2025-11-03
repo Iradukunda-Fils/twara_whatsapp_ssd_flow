@@ -40,7 +40,7 @@ class PaymentPendingState(BaseStateHandler):
         # Start payment polling (background task)
         payment_ref = self.get_context("payment_ref")
         if payment_ref:
-            from whatsapp_ussd.tasks import poll_payment_status
+            from ...tasks import poll_payment_status
             poll_payment_status.delay(payment_ref, attempt=0)
         
         return TextMessage(
@@ -105,5 +105,3 @@ class PaymentPendingState(BaseStateHandler):
             )
         )
     
-    def get_allowed_transitions(self) -> list:
-        return ["payment_success", "payment_failed", "main_menu", "payment_pending"]

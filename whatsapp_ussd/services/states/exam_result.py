@@ -35,7 +35,7 @@ class ExamResultState(BaseStateHandler):
             )
         
         # Update performance metrics (async)
-        from whatsapp_ussd.tasks import update_customer_performance
+        from ...tasks import update_customer_performance
         update_customer_performance.delay(self.customer.id)
         
         # Determine pass/fail
@@ -90,7 +90,7 @@ class ExamResultState(BaseStateHandler):
             self.ussd_user.save(update_fields=['failed_exams_count'])
             
             # Schedule subscription offer after 15 seconds
-            from whatsapp_ussd.tasks import trigger_subscription_offer_task
+            from ...tasks import trigger_subscription_offer_task
             trigger_subscription_offer_task.apply_async(
                 args=[self.customer.phone_number],
                 countdown=15
@@ -162,5 +162,3 @@ class ExamResultState(BaseStateHandler):
         
         return weak
     
-    def get_allowed_transitions(self) -> list:
-        return ["waiting_for_offer", "exam_start", "main_menu", "subscription_offer"]

@@ -49,5 +49,3 @@ class WaitingForOfferState(BaseStateHandler):
             )
         )
     
-    def get_allowed_transitions(self) -> list:
-        return ["subscription_offer", "main_menu", "exam_start", "waiting_for_offer"]

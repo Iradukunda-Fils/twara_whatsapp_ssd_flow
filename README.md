@@ -69,11 +69,11 @@
          │               │                │
     ┌────▼─────┐  ┌─────▼──────┐  ┌─────▼────────┐
     │ EXAM     │  │ BUY_CODE   │  │ REGISTER_    │
-    │ (Quiz)   │  │ (Direct    │  │ POLICE       │
+    │ (quiz)   │  │ (Direct    │  │ POLICE       │
     │          │  │  purchase) │  │ (Info only)  │
     └────┬─────┘  └────────────┘  └──────────────┘
          │
-         │ (Quiz completed)
+         │ (quiz completed)
     ┌────▼──────────┐
     │ EXAM_RESULT   │ (Show score + weak areas)
     │               │
@@ -274,4 +274,33 @@ twara/
 ├── docker-compose.yml
 ├── celery.py
 └── settings.py
+```
+
+
+```
+twara/
+├── api/
+│   ├── __init__.py
+│   ├── urls.py                    # API routes
+│   ├── views/
+│   │   ├── __init__.py
+│   │   ├── webhook.py             # WhatsApp webhook handler
+│   │   ├── customer.py            # Customer management
+│   │   ├── payment.py             # Payment endpoints
+│   │   ├── exam.py                # Exam management
+│   │   └── admin.py               # Admin/testing endpoints
+│   ├── serializers.py             # DRF serializers
+│   ├── permissions.py             # Custom permissions
+│   ├── middleware.py              # Request/response middleware
+│   └── tests/
+│       ├── test_webhook.py
+│       ├── test_customer_api.py
+│       └── test_payment_api.py
+├── integrations/
+│   ├── mobile_money.py            # MTN/Airtel integration
+│   └── whatsapp_webhook.py        # WhatsApp webhook parser
+└── settings/
+    ├── base.py
+    ├── development.py
+    └── production.py
 ```

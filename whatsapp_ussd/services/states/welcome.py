@@ -40,5 +40,3 @@ class WelcomeState(BaseStateHandler):
             context_updates={"welcomed": True}
         )
     
-    def get_allowed_transitions(self) -> list:
-        return ["name_capture", "main_menu"]

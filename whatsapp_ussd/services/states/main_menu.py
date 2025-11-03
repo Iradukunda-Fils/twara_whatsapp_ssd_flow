@@ -60,7 +60,7 @@ class MainMenuState(BaseStateHandler):
             },
             {
                 "id": "police_info",
-                "title": "Kwiyandikisha kuri Police",
+                "title": "Kwiyandikisha kur Police",
                 "description": "Menya uko wiyandikisha"
             }
         ]
@@ -132,12 +132,3 @@ class MainMenuState(BaseStateHandler):
             )
         )
     
-    def get_allowed_transitions(self) -> list:
-        return [
-            "exam_start", 
-            "buy_code_direct", 
-            "police_registration_info",
-            "view_progress",
-            "subscription_status",
-            "main_menu"
-        ]

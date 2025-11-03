@@ -11,9 +11,16 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+
+from dotenv import load_dotenv
+
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+load_dotenv(BASE_DIR / "./.env")
 
 
 # Quick-start development settings - unsuitable for production
@@ -38,8 +45,17 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
+    # Third party
+    'rest_framework',
+    'rest_framework.authtoken',
+    'django_filters',
+    # 'corsheaders',
+    'django_celery_beat',
+    'django_celery_results',
+
     # custom apps
-    'whatsapp_ussd'
+    'whatsapp_ussd',
+    'api'
 ]
 
 MIDDLEWARE = [
@@ -50,6 +66,11 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    
+    # Custom ones
+    'api.middleware.RequestLoggingMiddleware',
+    'api.middleware.RateLimitMiddleware',
+    'api.middleware.RateLimitMiddleware',
 ]
 
 ROOT_URLCONF = 'ussd_settings.urls'
@@ -125,34 +146,156 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
-
+# Cache (Redis)
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': os.getenv('DJANGO_REDIS_URL', 'redis://localhost:6379/0'),
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'CONNECTION_POOL_KWARGS': {'max_connections': 50},
+            'SOCKET_CONNECT_TIMEOUT': 5,
+            'SOCKET_TIMEOUT': 5,
+        }
+    }
+}
 
 
 # Celery Configuration 
 
+# Rate limiting (protect external APIs)
+CELERY_TASK_ANNOTATIONS = {
+    'whatsapp_ussd.tasks.send_whatsapp_message': {'rate_limit': '100/m'},
+    'whatsapp_ussd.tasks.poll_payment_status': {'rate_limit': '200/m'},
+}
 
-# celery_config.py
+# Celery Configuration
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/1')
+# Task time limits
+CELERY_TASK_SOFT_TIME_LIMIT = 300  # 5 minutes soft limit
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'Africa/Kigali'
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
+CELERY_RESULT_EXPIRES = 3600  # 1 hour
 
 # Retry configuration
 CELERY_TASK_ACKS_LATE = True  # Only ack after task completes
 CELERY_TASK_REJECT_ON_WORKER_LOST = True  # Requeue on worker crash
 
-# Result backend for tracking
-import os
-CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0')
-CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://redis:6379/0')
-CELERY_RESULT_EXPIRES = 3600  # 1 hour
-
-# Task time limits
-CELERY_TASK_SOFT_TIME_LIMIT = 300  # 5 minutes soft limit
-CELERY_TASK_TIME_LIMIT = 360  # 6 minutes hard limit
-
 # Monitoring
 CELERY_SEND_TASK_SENT_EVENT = True
 CELERY_TRACK_STARTED = True
 
-# Rate limiting (protect external APIs)
-CELERY_TASK_ANNOTATIONS = {
-    'twara.tasks.send_whatsapp_message': {'rate_limit': '100/m'},
-    'twara.tasks.poll_payment_status': {'rate_limit': '200/m'},
+
+# WhatsApp Configuration
+WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID", "")
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
+WHATSAPP_APP_SECRET = os.getenv("WHATSAPP_APP_SECRET", "")
+WHATSAPP_BUSINESS_ID = os.getenv("WHATSAPP_BUSINESS_ID", "")
+
+WHATSAPP_GRAPH_API_URL = os.getenv("GRAPH_API_URL", "https://graph.facebook.com/v20.0")
+WHATSAPP_DEFAULT_TIMEOUT = os.getenv("DEFAULT_TIMEOUT", 30.0)
+WHATSAPP_MAX_BATCH_SIZE = os.getenv("MAX_BATCH_SIZE", 100)
+WHATSAPP_MAX_TEXT_LENGTH = os.getenv("MAX_TEXT_LENGTH", 4096)
+
+
+# REST Framework Configuration
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.TokenAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 50,
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
+    ],
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+    ],
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.JSONParser',
+        'rest_framework.parsers.MultiPartParser',
+    ],
+    #'EXCEPTION_HANDLER': 'your_app.exceptions.custom_exception_handler',
 }
+
+
+# CORS Settings
+CORS_ALLOW_ALL_ORIGINS = DEBUG
+CORS_ALLOWED_ORIGINS = os.getenv(
+    'CORS_ALLOWED_ORIGINS',
+    'http://localhost:3000,http://localhost:8000'
+).split(',')
+
+# Mobile Money Settings
+# MTN Mobile Money
+MTN_MOMO_API_URL = os.getenv('MTN_MOMO_API_URL', 'https://sandbox.momodeveloper.mtn.com')
+MTN_MOMO_API_USER = os.getenv('MTN_MOMO_API_USER', '')
+MTN_MOMO_API_KEY = os.getenv('MTN_MOMO_API_KEY', '')
+MTN_MOMO_SUBSCRIPTION_KEY = os.getenv('MTN_MOMO_SUBSCRIPTION_KEY', '')
+MTN_MOMO_ENVIRONMENT = os.getenv('MTN_MOMO_ENVIRONMENT', 'sandbox')  # sandbox or production
+
+# Airtel Money
+AIRTEL_MONEY_API_URL = os.getenv('AIRTEL_MONEY_API_URL', 'https://openapiuat.airtel.africa')
+AIRTEL_MONEY_CLIENT_ID = os.getenv('AIRTEL_MONEY_CLIENT_ID', '')
+AIRTEL_MONEY_CLIENT_SECRET = os.getenv('AIRTEL_MONEY_CLIENT_SECRET', '')
+AIRTEL_MONEY_API_KEY = os.getenv('AIRTEL_MONEY_API_KEY', '')
+
+
+
+
+# Logging
+# LOGGING = {
+#     'version': 1,
+#     'disable_existing_loggers': False,
+#     'formatters': {
+#         'verbose': {
+#             'format': '{levelname} {asctime} {module} {message}',
+#             'style': '{',
+#         },
+#     },
+#     'handlers': {
+#         'console': {
+#             'class': 'logging.StreamHandler',
+#             'formatter': 'verbose',
+#         },
+#         'file': {
+#             'class': 'logging.handlers.RotatingFileHandler',
+#             'filename': os.path.join(BASE_DIR, 'logs', 'twara.log'),
+#             'maxBytes': 1024 * 1024 * 10,  # 10 MB
+#             'backupCount': 5,
+#             'formatter': 'verbose',
+#         },
+#     },
+#     'root': {
+#         'handlers': ['console', 'file'],
+#         'level': 'INFO',
+#     },
+#     'loggers': {
+#         'django': {
+#             'handlers': ['console', 'file'],
+#             'level': 'INFO',
+#             'propagate': False,
+#         },
+#         'api': {
+#             'handlers': ['console', 'file'],
+#             'level': 'DEBUG',
+#             'propagate': False,
+#         },
+#         'core': {
+#             'handlers': ['console', 'file'],
+#             'level': 'DEBUG',
+#             'propagate': False,
+#         },
+#     },
+# }

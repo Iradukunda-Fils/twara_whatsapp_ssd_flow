@@ -61,5 +61,3 @@ class NameCaptureState(BaseStateHandler):
             context_updates={"name_captured": True}
         )
     
-    def get_allowed_transitions(self) -> list:
-        return ["name_capture", "main_menu"]

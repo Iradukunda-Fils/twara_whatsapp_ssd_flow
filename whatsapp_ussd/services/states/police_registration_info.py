@@ -90,5 +90,3 @@ class PoliceRegistrationInfoState(BaseStateHandler):
             )
         )
     
-    def get_allowed_transitions(self) -> list:
-        return ["exam_start", "plan_selection", "main_menu"]

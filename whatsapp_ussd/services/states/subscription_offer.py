@@ -90,5 +90,3 @@ class SubscriptionOfferState(BaseStateHandler):
             )
         )
     
-    def get_allowed_transitions(self) -> list:
-        return ["plan_selection", "main_menu", "subscription_offer"]

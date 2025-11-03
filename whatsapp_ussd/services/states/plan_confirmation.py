@@ -112,5 +112,3 @@ class PlanConfirmationState(BaseStateHandler):
             )
         )
     
-    def get_allowed_transitions(self) -> list:
-        return ["payment_input", "plan_selection", "main_menu", "plan_confirmation"]

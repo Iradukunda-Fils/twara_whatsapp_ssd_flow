@@ -137,6 +137,5 @@ class ViewProgressState(BaseStateHandler):
             context_updates={}
         )
     
-    def get_allowed_transitions(self) -> list:
-        return ["exam_start", "main_menu"]
+
 

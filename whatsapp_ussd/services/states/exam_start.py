@@ -91,16 +91,16 @@ class ExamStartState(BaseStateHandler):
         
         if choice == "start_exam" or "tangira" in choice:
             # Create quiz record
-            from whatsapp_ussd.tasks import create_exam_session
+            from ...tasks import create_exam_session
+            self.schedule_task(task_func=create_exam_session, args=[self.customer.id])
             
             return StateTransition(
                 next_state="exam_in_progress",
                 context_updates={
                     "exam_start_time": timezone.now().isoformat()
                 },
-                celery_tasks=[
-                    (create_exam_session, [self.customer.id], {}, 0)
-                ]
+                celery_tasks = self.celery_tasks
+                
             )
         
         elif choice == "cancel" or "hagarika" in choice:
@@ -123,5 +123,3 @@ class ExamStartState(BaseStateHandler):
             )
         )
     
-    def get_allowed_transitions(self) -> list:
-        return ["exam_in_progress", "main_menu", "subscription_offer"]

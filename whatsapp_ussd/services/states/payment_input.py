@@ -81,7 +81,11 @@ class PaymentInputState(BaseStateHandler):
         plan = self.get_context("selected_plan")
         
         # Initiate payment (async task)
-        from whatsapp_ussd.tasks import initiate_mobile_money_payment
+        from ...tasks import initiate_mobile_money_payment
+        self.schedule_task(
+                    task_func=initiate_mobile_money_payment,
+                    args=[self.customer.id, phone, plan['price'], plan['days']]
+                )
         
         return StateTransition(
             next_state="payment_pending",
@@ -89,14 +93,7 @@ class PaymentInputState(BaseStateHandler):
                 "payment_phone": phone,
                 "payment_initiated_at": timezone.now().isoformat()
             },
-            celery_tasks=[
-                (
-                    initiate_mobile_money_payment,
-                    [self.customer.id, phone, plan['price'], plan['days']],
-                    {},
-                    0
-                )
-            ]
+            celery_tasks=self.celery_tasks
         )
     
     def _validate_phone_number(self, phone: str) -> tuple[bool, str]:
@@ -128,6 +125,3 @@ class PaymentInputState(BaseStateHandler):
             return False, "Numero ntabwo iri muri MTN cyangwa Airtel."
         
         return True, ""
-    
-    def get_allowed_transitions(self) -> list:
-        return ["payment_pending", "payment_input", "plan_confirmation"]

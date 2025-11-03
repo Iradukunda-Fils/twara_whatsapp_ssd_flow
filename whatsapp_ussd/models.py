@@ -4,17 +4,36 @@ from django.utils import timezone
 from django.utils.timesince import timesince
 from django.contrib.auth.models import User
 from datetime import timedelta
-from shortuuidfield.fields import ShortUUIDField  # type: ignore[import-untyped]
+from shortuuid.django_fields import ShortUUIDField
 
-# Create your models here.
+
+from django.db import models
+from django.db.models import ExpressionWrapper, F, Sum, Avg
+from django.utils import timezone
+from django.utils.timesince import timesince
+from django.contrib.auth.models import User
+from datetime import timedelta
+from shortuuid.django_fields import ShortUUIDField
+
+
+# ------------------------
+# Core Customer Models
+# ------------------------
 
 class Customer(models.Model):
     name = models.CharField(max_length=255, null=True, blank=True)
     phone_number = models.CharField(max_length=15, unique=True)
     exam_date = models.DateField(null=True, blank=True)
     feedback = models.TextField(null=True, blank=True)
-    Has_been_contacted = models.BooleanField(default=False)
-    last_contacted = models.DateTimeField(null=True, blank=True)
+    Has_been_contacted=models.BooleanField(default=False)
+    last_contacted=models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['phone_number']),
+            models.Index(fields=['exam_date']),
+        ]
+        ordering = ['name']
     
     def __str__(self):
         return self.name or f'Customer {self.phone_number}'
@@ -61,51 +80,45 @@ class Customer(models.Model):
 
 class UssdUser(Customer):
     """
-    Represents a USSD user with state tracking and activity monitoring.
-    Inherits from Customer, so has all Customer fields plus tracking fields.
-    
-    Since UssdUser inherits from Customer, it IS a Customer instance.
-    Use UssdUser for all user operations instead of Customer.
+    Represents a USSD user with session/state tracking.
+    Inherits from Customer.
     """
-    # State tracking
-    current_flow_state = models.CharField(
-        max_length=50,
-        default='welcome',
-        db_index=True
-    )
+    current_flow_state = models.CharField(max_length=50, default='welcome', db_index=True)
     state_context = models.JSONField(default=dict, blank=True)
-    
-    # Session metadata
+
     total_messages = models.IntegerField(default=0)
     last_interaction = models.DateTimeField(auto_now=True, db_index=True)
     preferred_language = models.CharField(max_length=5, default='rw')
-    
-    # Behavioral flags (for conditional flows)
+
     failed_exams_count = models.IntegerField(default=0)
     needs_coaching = models.BooleanField(default=False)
-    is_vip = models.BooleanField(default=False)  # Multiple active subscriptions
-    
+    is_vip = models.BooleanField(default=False)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['current_flow_state']),
+            models.Index(fields=['last_interaction']),
+        ]
+
     def __str__(self):
         return f"USSD User: {self.phone_number} ({self.current_flow_state})"
-    
+
+    # --- Activity Helpers ---
     def increment_message_count(self):
-        """Increment message counter for tracking"""
-        self.total_messages = (self.total_messages or 0) + 1
+        self.total_messages += 1
         self.last_interaction = timezone.now()
         self.save(update_fields=['total_messages', 'last_interaction'])
-    
+
     def update_last_interaction(self):
-        """Update last interaction timestamp"""
         self.last_interaction = timezone.now()
         self.save(update_fields=['last_interaction'])
-    
+
     def get_activity_summary(self):
-        """Get user activity summary for progress tracking"""
         return {
-            'total_messages': self.total_messages or 0,
+            'total_messages': self.total_messages,
             'last_interaction': self.last_interaction,
             'current_state': self.current_flow_state,
-            'failed_exams': self.failed_exams_count or 0,
+            'failed_exams': self.failed_exams_count,
             'needs_coaching': self.needs_coaching,
             'is_vip': self.is_vip,
             'days_since_last_interaction': (timezone.now() - self.last_interaction).days if self.last_interaction else None,
@@ -113,10 +126,11 @@ class UssdUser(Customer):
             'phone_number': self.phone_number,
             'name': self.name,
         }
+
     
     class Meta:
         indexes = [
-            models.Index(fields=['phone_number', 'current_flow_state']),
+            models.Index(fields=['current_flow_state']),
             models.Index(fields=['last_interaction']),
         ]
 
@@ -124,11 +138,9 @@ class UssdUser(Customer):
 # Alias for backward compatibility or convenience
 USSD_USER = UssdUser
 
-    
-
-
-
-
+# ------------------------
+# Payments / Subscriptions
+# ------------------------
 
 class UserPayment(models.Model):
     STATUS_CHOICES = [
@@ -157,11 +169,27 @@ class UserPayment(models.Model):
 
     last_updated = models.DateTimeField(null=True, auto_now=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['paying_number']),
+            models.Index(fields=['status']),
+        ]
+
+    def __str__(self):
+        return f"{self.paying_number} | {self.amount_paid} | {self.status}"
+
+
+
+
+
+# ------------------------
+# Quiz & Performance
+# ------------------------
+
 class quiz(models.Model):
     language = models.CharField(max_length=10, null=True, blank=True, default='rw')
     taken = models.DateTimeField(auto_now_add=True, null=True)
-    # Use UssdUser (which is a Customer) for tracking
-    customer = models.ForeignKey(Customer, null=True, blank=True, on_delete=models.SET_NULL, help_text="Can be Customer or UssdUser (UssdUser is preferred)")
+    customer = models.ForeignKey(Customer, null=True, blank=True, on_delete=models.SET_NULL)
     user = models.ForeignKey(User, null=True, blank=True, on_delete=CASCADE)
     marks = models.DecimalField(null=True, max_digits=5, decimal_places=2)
     amategekoMarks = models.DecimalField(
@@ -176,13 +204,13 @@ class quiz(models.Model):
         null=True, max_digits=5, decimal_places=2)
     ImigenzurireMarks = models.DecimalField(
         null=True, max_digits=5, decimal_places=2)
-    
-    failed_questions = models.JSONField(default=list, blank=True, null=True)
-    succeeded_questions = models.JSONField(default=list, blank=True, null=True)
+
+    def __str__(self):
+        return f"Quiz for {self.customer or self.user} on {self.taken}"
 
 class Performance(models.Model):
     # UssdUser inherits from Customer, so this can reference either
-    customer = models.OneToOneField(Customer, null=True, blank=True, on_delete=models.CASCADE, related_name="performance", help_text="Prefer UssdUser instances")
+    customer = models.OneToOneField(Customer,null=True, blank=True, on_delete=models.CASCADE, related_name="performance")
     user = models.ForeignKey(User, null=True, blank=True, on_delete=CASCADE)
     
     # Average scores for the last 5 quizzes (or all if less than 5)
@@ -193,7 +221,7 @@ class Performance(models.Model):
     avg_IbimenyetsoMarks = models.DecimalField(max_digits=5, decimal_places=2, null=True)
     avg_IbirangaMarks = models.DecimalField(max_digits=5, decimal_places=2, null=True)
     avg_ImigenzurireMarks = models.DecimalField(max_digits=5, decimal_places=2, null=True)
-    mastered_questions = models.IntegerField(default=0)
+    mastered_questions=models.IntegerField(default=0)
     
     total_attempts = models.IntegerField(default=0)
     last_quiz_date = models.DateTimeField(null=True, blank=True)
@@ -252,7 +280,11 @@ class Performance(models.Model):
         return "Performance (no user/customer)"
 
 
-# Event logging for analytics
+
+# ------------------------
+# Event Logging / Analytics
+# ------------------------
+
 class UserEvent(models.Model):
     """
     Immutable log of all state transitions and user actions.
@@ -261,29 +293,27 @@ class UserEvent(models.Model):
     Note: Since UssdUser inherits from Customer, we primarily use UssdUser.
     The customer field can reference either Customer or UssdUser (which IS a Customer).
     """
-    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='events', help_text="Use UssdUser instances (which are Customers)")
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='events')
     event_type = models.CharField(max_length=50, db_index=True)
     from_state = models.CharField(max_length=50, null=True, blank=True)
     to_state = models.CharField(max_length=50, null=True, blank=True)
     metadata = models.JSONField(default=dict)
     timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
-    
+
     class Meta:
         indexes = [
             models.Index(fields=['customer', '-timestamp']),
             models.Index(fields=['event_type', '-timestamp']),
         ]
-        
+        ordering = ['-timestamp']
+
     def __str__(self):
-        phone = self.customer.phone_number if self.customer else "Unknown"
-        return f"{self.event_type} - {phone} at {self.timestamp}"
-    
+        return f"{self.event_type} - {self.customer.phone_number} at {self.timestamp}"
+
     @property
     def ussd_user(self):
-        """Get UssdUser instance if customer is a UssdUser"""
         if isinstance(self.customer, UssdUser):
             return self.customer
-        # Try to find associated UssdUser
         try:
             return UssdUser.objects.get(pk=self.customer.pk)
         except UssdUser.DoesNotExist:

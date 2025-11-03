@@ -118,5 +118,3 @@ class PlanSelectionState(BaseStateHandler):
             )
         )
     
-    def get_allowed_transitions(self) -> list:
-        return ["plan_confirmation", "plan_selection", "main_menu"]

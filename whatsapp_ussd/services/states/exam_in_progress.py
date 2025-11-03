@@ -95,8 +95,6 @@ class ExamInProgressState(BaseStateHandler):
             )
         )
     
-    def get_allowed_transitions(self) -> list:
-        return ["exam_result", "main_menu", "exam_in_progress"]
     
     def on_exit(self):
         """Clear temporary exam data"""

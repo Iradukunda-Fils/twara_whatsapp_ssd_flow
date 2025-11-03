@@ -4,7 +4,6 @@ from .settings import *
 from ._model import *
 from ._parameters import *
 __all__ = (
-    "WhatsAppService",
     "WhatsAppMessage",
     "TextMessage",
     "TemplateMessage",

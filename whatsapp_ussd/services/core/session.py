@@ -4,6 +4,7 @@ from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 from typing import Optional, Dict, Any
+from .registry import StateRegistry
 import json
 
 from whatsapp_ussd.models import UssdUser
@@ -31,6 +32,7 @@ class UserSession:
         
         # Load session data from Redis (or DB fallback)
         self._load_session()
+        
     
     def _get_or_create_customer(self) -> UssdUser:
         """
@@ -72,10 +74,10 @@ class UserSession:
         • Update Redis for fast access
         • Log transition in UserEvent for analytics
         """
-        with transaction.atomic():
-            # Update context
-            self.context.update(context_updates)
-            
+        # Update context
+        self.context.update(context_updates)
+
+        def _db_write():
             # Log state change
             # Since UssdUser inherits from Customer, self.customer IS the user
             from whatsapp_ussd.models import UserEvent
@@ -98,7 +100,10 @@ class UserSession:
             
             # Update Redis cache
             self.current_state = new_state
-            self._persist_to_redis()
+
+        with transaction.atomic():
+            _db_write()
+            transaction.on_commit(self._persist_to_redis)
     
     def _persist_to_redis(self):
         """Save session to Redis"""
@@ -128,3 +133,24 @@ class UserSession:
         self.current_state = 'welcome'
         self.context = {}
         self.message_history = []
+
+        # Reset USSD user record (DB)
+        self.customer.current_flow_state = 'welcome'
+        self.customer.state_context = {}
+        self.customer.save(update_fields=[
+            'current_flow_state', 
+            'state_context', 
+            'last_interaction'
+        ])
+
+    def restore_if_expired(self):
+        if not cache.get(self.redis_key):
+            self._load_session()
+            handler = StateRegistry.get_handler(self.current_state, self)
+            # Use on_reenter if present, else fall back to on_enter
+            if hasattr(handler, "on_reenter"):
+                handler.on_reenter()
+            else:
+                handler.on_enter()
+
+    

@@ -29,6 +29,7 @@ STATE_TRANSITION_MAP = {
     "police_registration_info": ["exam_start", "plan_selection", "main_menu"],
     "view_progress": ["exam_start", "main_menu"],
     "subscription_status": ["plan_selection", "main_menu"],
+    # "weekly_progress_report": ["exam_start", "detailed_performance", "main_menu"]  # #** Nont Working **# #
 }
 
 # State timeouts (in seconds)

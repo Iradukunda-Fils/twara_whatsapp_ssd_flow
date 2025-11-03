@@ -4,8 +4,8 @@ State handlers registry.
 Import all state handlers here for auto-discovery.
 """
 
-
-from .progress_report import WeeklyProgressReportState
+from .base import BaseStateHandler
+# from .weekly_progress_report import WeeklyProgressReportState
 from .welcome import WelcomeState
 from .exam_result import ExamResultState
 from .name_capture import NameCaptureState
@@ -18,7 +18,7 @@ from .plan_confirmation import PlanConfirmationState
 from .payment_input import PaymentInputState
 from .payment_pending import PaymentPendingState
 from .payment_success import PaymentSuccessState
-# from .payment_failed import PaymentFailedState
+from .payment_failed import PaymentFailedState
 from .buy_code_direct import BuyCodeDirectState
 from .police_registration_info import PoliceRegistrationInfoState
 
@@ -36,13 +36,14 @@ ALL_STATE_HANDLERS = [
     PaymentInputState,
     PaymentPendingState,
     PaymentSuccessState,
-    # PaymentFailedState,
-    WeeklyProgressReportState,
+    PaymentFailedState,
+    # WeeklyProgressReportState,
     BuyCodeDirectState,
     PoliceRegistrationInfoState,
 ]
 
 __all__ = [
+    'BaseStateHandler',
     'WelcomeState',
     'NameCaptureState',
     'MainMenuState',

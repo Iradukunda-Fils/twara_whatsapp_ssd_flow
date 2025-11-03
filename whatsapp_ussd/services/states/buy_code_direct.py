@@ -39,6 +39,3 @@ class BuyCodeDirectState(BaseStateHandler):
             next_state="plan_selection",
             context_updates={"direct_purchase": True}
         )
-    
-    def get_allowed_transitions(self) -> list:
-        return ["plan_selection"]
