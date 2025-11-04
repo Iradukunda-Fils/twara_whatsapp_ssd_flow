@@ -5,14 +5,14 @@ from .exceptions import StateNotFoundError
 from .registry import StateRegistry
 from ..core.session import UserSession
 from ..states.base import BaseStateHandler, StateTransition
-from whatsapp import TextMessage, MessageResponse
+from whatsapp import TextMessage, MessageResponse, WhatsAppMessage
 
 logger = logging.getLogger(__name__)
 
 
 class StateFlowController:
     """
-    Central coordinator for all state transitions and message processing.
+    Central coordinator for state transitions and message processing.
     """
 
     def __init__(self):
@@ -20,116 +20,160 @@ class StateFlowController:
         self.event_dispatcher = EventDispatcher()
 
     def handle_message(self, phone_number: str, message: str) -> Optional[MessageResponse]:
-        """
-        Main entry point for processing incoming WhatsApp messages.
-        Synchronous version of previous async handler.
-        """
         try:
-            # 1. Load session
             session = UserSession(phone_number)
-            session.add_message(message, sender='user')
+            # session.clear()
+            session.add_message(message, sender="user")
 
-            # 2. Get state handler
-            state_handler = self.registry.get_handler(session.current_state, session)
+            handler = self.registry.get_handler(session.current_state, session)
+            transition = handler.process_input(message)
 
-            # 3. Process input
-            transition = state_handler.process_input(message)
             if not transition or not getattr(transition, "next_state", None):
-                logger.error("Invalid transition from state %s: %s", state_handler.state_name, transition)
-                return self._handle_invalid_transition(session, "Internal error")
+                logger.warning("Invalid transition from %s", handler.state_name)
+                return self._handle_invalid_transition(session)
 
+            # Exit current state
+            handler.on_exit()
+            session.transition_to(transition.next_state, **(transition.context_updates or {}))
+            self._schedule_tasks(transition.celery_tasks)
 
-            # 4. Validate transition
-            is_valid, error_msg = state_handler.validate_transition(transition.next_state)
-            if not is_valid:
-                return self._handle_invalid_transition(session, error_msg)
+            # Enter next state (auto-send response)
+            response = self._enter_state(
+                transition.next_state,
+                session,
+                message_override=transition.message_override
+            )
 
-            # 5. Execute transition
-            state_handler.on_exit()
-            session.transition_to(transition.next_state, **transition.context_updates)
+            # Persist outgoing message in session history (best-effort)
+            try:
+                # If final_response is MessageResponse we may not have a 'body' attribute
+                bot_text = None
+                if isinstance(response, MessageResponse):
+                    # Try to find a textual body in raw_response if present
+                    raw = getattr(response, "raw_response", None)
+                    if isinstance(raw, dict):
+                        # attempt common places (best-effort)
+                        bot_text = raw.get("message", raw.get("messages", None))
+                elif isinstance(response, WhatsAppMessage):
+                    bot_text = getattr(response, "body", str(response))
+                elif hasattr(response, "body"):
+                    bot_text = getattr(response, "body", None)
 
-            # 6. Schedule Celery tasks
-            if hasattr(transition, "celery_tasks"):
-                self._schedule_tasks(transition.celery_tasks)
+                if bot_text:
+                    session.add_message(str(bot_text), sender="bot")
+            except Exception:
+                logger.exception("Failed to record outgoing message for %s", phone_number)
 
-            # 7. Enter next state and send message
-            next_handler = self.registry.get_handler(transition.next_state, session)
+            # # Emit event (best-effort)
+            # try:
+            #     self.event_dispatcher.emit(
+            #         "message_processed",
+            #         {
+            #             "phone": phone_number,
+            #             "from_state": handler.state_name,
+            #             "to_state": transition.next_state,
+            #             "success": getattr(response, "success", True),
+            #         },
+            #     )
+            # except Exception:
+            #     logger.exception("Event dispatch failed")
 
-            response_message = transition.message_override or next_handler.on_enter()
+            # If final_response is a WhatsAppMessage, ensure the message was sent and return its MessageResponse.
+            if isinstance(response, WhatsAppMessage):
+                try:
+                    sent = response.send()
+                    return sent
+                except Exception:
+                    logger.exception("Failed to send WhatsAppMessage for %s", phone_number)
+                    return self._handle_system_error(phone_number)
 
-            if not response_message:
-                logger.error("No response message from state %s", transition.next_state)
-                return self._handle_invalid_transition(session, "Internal error")
-
-            # 8. Send via WhatsApp synchronously
-            whatsapp_response = response_message.send()  # synchronous version
-            session.add_message(response_message.body if isinstance(response_message, TextMessage) else str(response_message), sender='bot')
-
-            # 9. Emit events
-            self.event_dispatcher.emit('message_processed', {
-                'phone': phone_number,
-                'from_state': state_handler.state_name,
-                'to_state': transition.next_state,
-                'success': getattr(whatsapp_response, 'success', True)
-            })
-
-            return whatsapp_response
+            return response
 
         except StateNotFoundError as e:
-            logger.error(f"State not found for {phone_number}: {e}")
+            logger.error("State not found for %s: %s", phone_number, e)
             return self._recover_to_safe_state(phone_number)
 
-        except Exception as e:
-            logger.exception(f"Critical error processing message: {e}")
+        except Exception:
+            logger.exception("Critical error during message handling")
             return self._handle_system_error(phone_number)
 
-    def _schedule_tasks(self, tasks: List[tuple]):
-        """Schedule Celery tasks from state transitions"""
-        for task_func, args, kwargs, countdown in tasks:
-            task_func.apply_async(args=args, kwargs=kwargs, countdown=countdown)
+    def _enter_state(self, state_name: str, session: UserSession, message_override=None):
+        """Helper to enter a state safely, optionally overriding message"""
+        handler = self.registry.get_handler(state_name, session)
+        try:
+            response = message_override or handler.on_enter()
+        except Exception:
+            logger.exception("Error entering state %s", state_name)
+            return self._handle_system_error(session.phone_number)
 
-    def _handle_invalid_transition(self, session: UserSession, error: str):
-        """Send error message and stay in current state"""
-        error_msg = TextMessage(
+        # If state returns a transition, follow it recursively
+        if isinstance(response, StateTransition):
+            session.transition_to(response.next_state, **(response.context_updates or {}))
+            self._schedule_tasks(response.celery_tasks)
+            return self._enter_state(response.next_state, session, response.message_override)
+
+        # ✅ AUTO-SEND if it's a WhatsApp message
+        if isinstance(response, WhatsAppMessage):
+            try:
+                sent_response = response.send()
+                return sent_response
+            except Exception:
+                logger.exception("Failed to send WhatsApp message for %s", session.phone_number)
+                return self._handle_system_error(session.phone_number)
+
+        # ✅ If already a MessageResponse (from QuickSend etc.)
+        if isinstance(response, MessageResponse):
+            return response
+
+        # If response is raw text or unsupported type
+        if isinstance(response, str):
+            return TextMessage(session.phone_number, response).send()
+
+        return response
+
+
+    # def _enter_state(self, state_name: str, /, *, session: UserSession, message_override=None): ...
+
+    def _schedule_tasks(self, tasks: list[tuple[Callable, list, dict, int]]):
+        """Schedule Celery tasks safely"""
+        if not tasks:
+            return
+        for task_func, args, kwargs, countdown in tasks:
+            try:
+                task_func.apply_async(args=args or [], kwargs=kwargs or {}, countdown=countdown or 0)
+            except Exception:
+                logger.exception("Failed to schedule task %s", task_func)
+
+    def _handle_invalid_transition(self, session: UserSession, error: str = None):
+        return TextMessage(
             to=session.phone_number,
-            body="Murakoze. Ongera mugerageze cangwa kanda 'Menu' kugira ngo usubire aho watangiriye."
-        )
-        return error_msg.send()  # synchronous
+            body="Murakoze. Ongera mugerageze cyangwa kanda 'Menu' kugira ngo usubire aho watangiriye."
+        ).send()
 
     def _recover_to_safe_state(self, phone_number: str):
-        """Fallback to main menu if state corrupted"""
         session = UserSession(phone_number)
-        session.transition_to('main_menu')
-
-        menu_handler = self.registry.get_handler('main_menu', session)
+        session.transition_to("main_menu")
+        menu_handler = self.registry.get_handler("main_menu", session)
         message = menu_handler.on_enter()
         return message.send()
 
     def _handle_system_error(self, phone_number: str):
-        """Send apology message on system failure"""
-        error_msg = TextMessage(
+        return TextMessage(
             to=phone_number,
             body="Mbabarira, habayeho ikibazo. Ongera mugerageze nyuma."
-        )
-        return error_msg.send()
+        ).send()
 
 
 class EventDispatcher:
-    """
-    Event bus for cross-cutting concerns (analytics, webhooks, etc.)
-    """
-
     _subscribers: Dict[str, List[Callable]] = {}
 
     @classmethod
     def subscribe(cls, event_name: str, callback: Callable):
-        """Register event listener"""
         cls._subscribers.setdefault(event_name, []).append(callback)
 
     def emit(self, event_name: str, data: Dict[str, Any]):
-        """Dispatch event to all subscribers"""
         for callback in list(self._subscribers.get(event_name, [])):
             try:
                 callback(data)
             except Exception:
-                logger.exception("Event subscriber error")
+                logger.exception("Event subscriber error for %s, data=%r", event_name, data)

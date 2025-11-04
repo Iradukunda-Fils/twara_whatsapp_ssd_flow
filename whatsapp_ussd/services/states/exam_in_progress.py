@@ -1,101 +1,116 @@
 # states/exam_in_progress.py
+from django.utils import timezone
+from datetime import timedelta
 from .base import BaseStateHandler, StateTransition
 from whatsapp import TextMessage
 from whatsapp_ussd.models import quiz
 
+
 class ExamInProgressState(BaseStateHandler):
     """
     User is currently taking exam (on external platform).
-    This state waits for exam completion webhook.
+    This state waits for exam completion webhook or time expiration.
     """
-    
+
     state_name = "exam_in_progress"
     display_name = "Exam In Progress"
     requires_auth = True
-    timeout_seconds = 1800  # 30 minutes max
-    
-    def on_enter(self) -> 'WhatsAppMessage':
+    timeout_seconds = 1800  # 30 minutes
+
+    def on_enter(self):
         """
-        Provide exam link and wait.
+        Send exam link and start tracking.
         """
-        # Get or create quiz session
         quiz_id = self.get_context("quiz_id")
-        
+
         if not quiz_id:
-            # This should have been created in exam_start
-            # Fallback: create here
             new_quiz = quiz.objects.create(
                 customer=self.customer,
-                language=getattr(self.ussd_user, 'preferred_language', 'rw')
+                language=getattr(self.ussd_user, "preferred_language", "rw"),
             )
             quiz_id = new_quiz.id
             self.update_context(quiz_id=quiz_id)
-        
-        # Generate exam link
+
         exam_url = f"https://twara.rw/exam/{quiz_id}"
-        
+        self.update_context(exam_start_time=timezone.now())
+
         return TextMessage(
             to=self.customer.phone_number,
             body=(
                 f"🎯 *IKIZAMINI CYATANGIYE*\n\n"
-                f"Kanda kuri link ikurikira:\n"
-                f"{exam_url}\n\n"
-                f"⏱ Igihe: 18 iminota\n"
-                f"📝 Ibibazo: 40\n\n"
-                f"Numara, uzasubira hano kugira ngo "
-                f"ubone amanota yawe. Amahirwe! 🍀"
+                f"Kanda kuri link ikurikira:\n{exam_url}\n\n"
+                f"⏱ Igihe: 18 iminota\n📝 Ibibazo: 40\n\n"
+                f"Numara, uzasubira hano kugira ngo ubone amanota yawe."
             ),
-            preview_url=True
+            preview_url=True,
         )
-    
+
     def process_input(self, user_message: str) -> StateTransition:
         """
-        Wait for exam completion (handled by webhook).
-        User can cancel or request help.
+        Detect if exam finished, help, cancel, or timeout.
         """
-        message_lower = user_message.lower().strip()
-        
-        if "hagarika" in message_lower or "cancel" in message_lower:
+        msg = user_message.lower().strip()
+
+        if "cancel" in msg or "hagarika" in msg:
             return StateTransition(
                 next_state="main_menu",
                 context_updates={"exam_cancelled": True},
                 message_override=TextMessage(
                     to=self.customer.phone_number,
-                    body="Ikizamini cyahagaritswe. Uza kureba igihe cyose."
-                )
+                    body="Ikizamini cyahagaritswe. Uza kugisubiramo nyuma.",
+                ),
             )
-        
-        elif "help" in message_lower or "ubufasha" in message_lower:
+
+        if "help" in msg or "ubufasha" in msg:
             return StateTransition(
-                next_state="exam_in_progress",  # Stay in state
-                context_updates={},
+                next_state=self.state_name,
                 message_override=TextMessage(
                     to=self.customer.phone_number,
                     body=(
-                        "🆘 *UBUFASHA*\n\n"
-                        "Niba ufite ikibazo:\n"
-                        "1. Reba niba internet ikora\n"
-                        "2. Subiramo link\n"
-                        "3. Hamagara: 0788 123 456\n\n"
-                        "Komeza ikizamini!"
-                    )
-                )
+                        "🆘 Ubufasha:\n"
+                        "• Reba niba internet yawe ikora.\n"
+                        "• Subiramo link y'ikizamini.\n"
+                        "• Hamagara: 0788 123 456.\n\n"
+                        "Komeza ikizamini cyawe!"
+                    ),
+                ),
             )
-        
-        # Default: remind user to complete exam
+
+        quiz_id = self.get_context("quiz_id")
+        if quiz_id:
+            q = quiz.objects.filter(id=quiz_id).first()
+            if q and q.marks is not None:
+                # Exam done!
+                return StateTransition(
+                    next_state="exam_result",
+                    context_updates={"exam_completed": True},
+                    message_override=TextMessage(
+                        to=self.customer.phone_number,
+                        body="🎉 Ikizamini kirarangiye! Reba amanota yawe 👇",
+                    ),
+                )
+
+        start_time = self.get_context("exam_start_time")
+        if start_time:
+            elapsed = timezone.now() - start_time
+            if elapsed > timedelta(seconds=self.timeout_seconds):
+                return StateTransition(
+                    next_state="exam_result",
+                    context_updates={"exam_timed_out": True},
+                    message_override=TextMessage(
+                        to=self.customer.phone_number,
+                        body="⏰ Igihe cy'ikizamini kirarangiye. Reba amanota yawe.",
+                    ),
+                )
+
         return StateTransition(
-            next_state="exam_in_progress",
-            context_updates={},
+            next_state=self.state_name,
             message_override=TextMessage(
                 to=self.customer.phone_number,
-                body=(
-                    "Ikizamini kirakomeje.\n"
-                    "Numara, uza kubona amanota yawe hano."
-                )
-            )
+                body="Ikizamini kirakomeje. Numara, uzabona amanota yawe hano.",
+            ),
         )
-    
-    
+
     def on_exit(self):
-        """Clear temporary exam data"""
+        """Clear temporary exam data."""
         self.update_context(exam_start_time=None)
