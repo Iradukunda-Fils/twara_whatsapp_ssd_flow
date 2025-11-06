@@ -12,7 +12,7 @@ import logging
 from whatsapp_ussd.models import quiz, Customer
 from api.serializers import quizSerializer
 from whatsapp_ussd.services.core.session import UserSession
-from whatsapp_ussd.services.core.registry import StateRegistry
+from whatsapp_ussd.services.core._registry import StateRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ class ExamCompletionWebhookView(APIView):
             session.transition_to('exam_result')
             
             # Send exam result message
-            from whatsapp_ussd.services.core.registry import StateRegistry
+            from whatsapp_ussd.services.core._registry import StateRegistry
             handler = StateRegistry.get_handler('exam_result', session)
             message = handler.on_enter()
             

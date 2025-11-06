@@ -13,9 +13,6 @@ urlpatterns = [
     # WhatsApp Webhook (Production)
     path('webhook/whatsapp/', webhook.WhatsAppWebhookView.as_view(), name='whatsapp-webhook'),
     
-    # WhatsApp Webhook Verification (Required by Meta)
-    path('webhook/whatsapp/verify/', webhook.WhatsAppWebhookVerifyView.as_view(), name='whatsapp-verify'),
-    
     # Payment Callbacks
     path('callback/payment/mtn/', payment.MTNPaymentCallbackView.as_view(), name='mtn-callback'),
     path('callback/payment/airtel/', payment.AirtelPaymentCallbackView.as_view(), name='airtel-callback'),

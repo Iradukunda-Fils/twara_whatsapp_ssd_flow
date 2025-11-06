@@ -3,9 +3,7 @@ from django.db import models
 from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
-from typing import Optional, Dict, Any
-from .registry import StateRegistry
-import json
+from ._registry import StateRegistry
 
 from whatsapp_ussd.models import UssdUser
 

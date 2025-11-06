@@ -69,7 +69,7 @@ class BaseStateHandler(ABC):
         pass
     
     @abstractmethod
-    def process_input(self, user_message: str) -> StateTransition:
+    def process_input(self, user_message: str) -> 'StateTransition':
         """
         Process user's response and determine next state.
         
@@ -107,7 +107,7 @@ class BaseStateHandler(ABC):
         Define valid next states (for safety checks).
         Override to specify allowed transitions.
         """
-        from .registry_config import STATE_TRANSITION_MAP
+        from ._registry_config import STATE_TRANSITION_MAP
         return STATE_TRANSITION_MAP.get(self.state_name, [])
     
     def on_exit(self):

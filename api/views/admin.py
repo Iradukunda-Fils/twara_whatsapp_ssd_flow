@@ -12,7 +12,7 @@ import logging
 from whatsapp_ussd.models import Customer, UserPayment, quiz
 from whatsapp_ussd.services.core.session import UserSession
 from whatsapp_ussd.services.core.controller import StateFlowController
-from whatsapp_ussd.services.core.registry import StateRegistry
+from whatsapp_ussd.services.core._registry import StateRegistry
 from whatsapp import TextMessage, ListMessage, InteractiveMessage
 
 logger = logging.getLogger(__name__)

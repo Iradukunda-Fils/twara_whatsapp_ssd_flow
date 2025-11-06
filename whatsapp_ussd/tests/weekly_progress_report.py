@@ -112,7 +112,7 @@
 #         )
     
 #     def get_allowed_transitions(self) -> list:
-#         from .registry_config import STATE_TRANSITION_MAP
+#         from ._registry_config import STATE_TRANSITION_MAP
 #         return STATE_TRANSITION_MAP[self.state_name]
     
 #     def _identify_weak_areas(self, quizzes) -> List[str]:

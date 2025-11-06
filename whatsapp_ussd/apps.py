@@ -8,7 +8,7 @@ class WhatsappUssdConfig(AppConfig):
 
     def ready(self):
         try:
-            from whatsapp_ussd.services.core.registry import StateRegistry
+            from whatsapp_ussd.services.core._registry import StateRegistry
             StateRegistry._load_all_handlers()
             StateRegistry.validate_graph()
         except Exception as e:

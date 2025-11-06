@@ -26,3 +26,5 @@ from .payment import (
     AirtelPaymentCallbackView,
     
 )
+
+from .webhook import WhatsAppWebhookView

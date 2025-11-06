@@ -32,7 +32,7 @@ SECRET_KEY = 'django-insecure-r1s=gph6_-!m5(ox3hm+qlq*0joe4y@@z_#3%ctgke$o-#b5*b
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["unstrepitous-manistic-angelena.ngrok-free.dev", "localhost"]
 
 
 # Application definition
@@ -194,13 +194,14 @@ CELERY_TRACK_STARTED = True
 # WhatsApp Configuration
 WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
-WHATSAPP_APP_SECRET = os.getenv("WHATSAPP_APP_SECRET", "")
+WHATSAPP_APP_SECRET = os.getenv("WHATSAPP_APP_SECRETS", "")
 WHATSAPP_BUSINESS_ID = os.getenv("WHATSAPP_BUSINESS_ID", "")
 
 WHATSAPP_GRAPH_API_URL = os.getenv("GRAPH_API_URL", "https://graph.facebook.com/v20.0")
 WHATSAPP_DEFAULT_TIMEOUT = os.getenv("DEFAULT_TIMEOUT", 30.0)
 WHATSAPP_MAX_BATCH_SIZE = os.getenv("MAX_BATCH_SIZE", 100)
 WHATSAPP_MAX_TEXT_LENGTH = os.getenv("MAX_TEXT_LENGTH", 4096)
+# WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", None)
 
 
 # REST Framework Configuration

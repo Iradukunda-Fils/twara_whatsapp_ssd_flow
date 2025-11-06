@@ -2,7 +2,7 @@
 from typing import Optional, Dict, Any, List, Callable
 import logging
 from .exceptions import StateNotFoundError
-from .registry import StateRegistry
+from ._registry import StateRegistry
 from ..core.session import UserSession
 from ..states.base import BaseStateHandler, StateTransition
 from whatsapp import TextMessage, MessageResponse
